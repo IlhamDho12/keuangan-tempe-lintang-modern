@@ -15,8 +15,19 @@
       "destination": { "service": "backend" }
     },
     {
-      "source": "/(.*)",
+      "source": "/assets/(.*)",
       "destination": { "service": "frontend" }
+    },
+    {
+      "source": "/(.*)\\.(png|jpg|jpeg|gif|svg|ico|css|js|json|woff|woff2|ttf|eot|html)",
+      "destination": { "service": "frontend" }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend",
+        "path": "/index.html"
+      }
     }
   ]
 }
