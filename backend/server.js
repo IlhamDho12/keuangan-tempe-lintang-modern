@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const fs = require('fs');
 const { open } = require('sqlite');
 const sqlite3 = require('sqlite3');
 require('dotenv').config();
@@ -10,7 +11,17 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkeuangantempelintang';
-const DB_PATH = path.join(__dirname, 'database.db');
+
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL;
+const dbDir = isProduction ? '/tmp' : __dirname;
+const DB_PATH = path.join(dbDir, 'database.db');
+
+if (isProduction && !fs.existsSync(DB_PATH)) {
+  const sourceDb = path.join(__dirname, 'database.db');
+  if (fs.existsSync(sourceDb)) {
+    fs.copyFileSync(sourceDb, DB_PATH);
+  }
+}
 
 app.use(cors());
 app.use(express.json());
@@ -967,9 +978,14 @@ app.delete('/api/users/:id', authenticateToken, requireRole(['admin']), async (r
 
 // Start Express server after DB init
 initDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-  });
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  }
 }).catch(err => {
   console.error('Failed to initialize database connection:', err);
 });
+
+module.exports = app;
+
