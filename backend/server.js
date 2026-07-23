@@ -93,10 +93,10 @@ async function initDb() {
     )
   `);
 
-  // Ensure default admin account exists with username 'admin' and password 'admin123'
+  // Ensure default admin, owner, and billy accounts have password 'admin123'
   try {
     const defaultAdminHash = await bcrypt.hash('admin123', 10);
-    const existingAdmin = await db.get('SELECT * FROM users WHERE username = ?', ['admin']);
+    const existingAdmin = await db.get('SELECT * FROM users WHERE LOWER(username) = ?', ['admin']);
     if (!existingAdmin) {
       await db.run(
         'INSERT INTO users (username, password, name, role) VALUES (?, ?, ?, ?)',
@@ -104,11 +104,13 @@ async function initDb() {
       );
       console.log('Default admin created: admin / admin123');
     } else {
-      await db.run('UPDATE users SET password = ? WHERE username = ?', [defaultAdminHash, 'admin']);
-      console.log('Admin password updated: admin / admin123');
+      await db.run('UPDATE users SET password = ? WHERE LOWER(username) = ?', [defaultAdminHash, 'admin']);
     }
+    // Also set default password 'admin123' for owner and billy
+    await db.run('UPDATE users SET password = ? WHERE LOWER(username) = ?', [defaultAdminHash, 'owner']);
+    await db.run('UPDATE users SET password = ? WHERE LOWER(username) = ?', [defaultAdminHash, 'billy']);
   } catch (seedErr) {
-    console.error('Error seeding admin account:', seedErr.message);
+    console.error('Error seeding user accounts:', seedErr.message);
   }
 }
 
@@ -144,7 +146,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const user = await db.get('SELECT * FROM users WHERE username = ?', [username]);
+    const user = await db.get('SELECT * FROM users WHERE LOWER(username) = LOWER(?)', [username.trim()]);
     if (!user) {
       return res.status(400).json({ message: 'Username atau Password salah.' });
     }
