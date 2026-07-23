@@ -27,6 +27,17 @@ app.use(cors());
 app.use(express.json());
 
 let db;
+let dbReady;
+
+// Middleware: wait for DB initialization on cold start
+app.use(async (req, res, next) => {
+  try {
+    await dbReady;
+    next();
+  } catch (err) {
+    res.status(500).json({ message: 'Database belum siap: ' + err.message });
+  }
+});
 
 // Connect to SQLite
 async function initDb() {
@@ -995,7 +1006,7 @@ app.delete('/api/users/:id', authenticateToken, requireRole(['admin']), async (r
 });
 
 // Start Express server after DB init
-initDb().then(() => {
+dbReady = initDb().then(() => {
   if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
@@ -1006,4 +1017,5 @@ initDb().then(() => {
 });
 
 module.exports = app;
+
 
