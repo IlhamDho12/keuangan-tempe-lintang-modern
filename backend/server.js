@@ -81,6 +81,24 @@ async function initDb() {
       journal_entry_id INTEGER
     )
   `);
+
+  // Ensure default admin account exists with username 'admin' and password 'admin123'
+  try {
+    const defaultAdminHash = await bcrypt.hash('admin123', 10);
+    const existingAdmin = await db.get('SELECT * FROM users WHERE username = ?', ['admin']);
+    if (!existingAdmin) {
+      await db.run(
+        'INSERT INTO users (username, password, name, role) VALUES (?, ?, ?, ?)',
+        ['admin', defaultAdminHash, 'Administrator Utama', 'admin']
+      );
+      console.log('Default admin created: admin / admin123');
+    } else {
+      await db.run('UPDATE users SET password = ? WHERE username = ?', [defaultAdminHash, 'admin']);
+      console.log('Admin password updated: admin / admin123');
+    }
+  } catch (seedErr) {
+    console.error('Error seeding admin account:', seedErr.message);
+  }
 }
 
 // Authentication Middleware
