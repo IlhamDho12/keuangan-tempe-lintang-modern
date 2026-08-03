@@ -212,6 +212,8 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
   const role = req.user.role;
   const uid = req.user.id;
+  const filterYear = req.query.year ? parseInt(req.query.year) : null;
+  const filterMonth = req.query.month ? parseInt(req.query.month) : null;
 
   try {
     if (role === 'pegawai') {
@@ -243,7 +245,27 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     }
 
     // Admin/Owner Dashboard
-    // 1. Cash Balance (Account 101)
+    // Determine filter date range for KPI cards
+    let kpiStartDate = null;
+    let kpiEndDate = null;
+    if (filterYear && filterMonth) {
+      // Specific month
+      kpiStartDate = `${filterYear}-${String(filterMonth).padStart(2, '0')}-01`;
+      const lastDay = new Date(filterYear, filterMonth, 0).getDate();
+      kpiEndDate = `${filterYear}-${String(filterMonth).padStart(2, '0')}-${lastDay}`;
+    } else if (filterYear) {
+      // Entire year
+      kpiStartDate = `${filterYear}-01-01`;
+      kpiEndDate = `${filterYear}-12-31`;
+    }
+    // If no filter, KPI shows all-time data
+
+    // Build WHERE clause for KPI queries
+    const kpiDateFilter = kpiStartDate
+      ? `AND date(je.date) BETWEEN date('${kpiStartDate}') AND date('${kpiEndDate}')`
+      : '';
+
+    // 1. Cash Balance (Account 101) — always all-time
     const cashRow = await db.get(
       `SELECT SUM(jl.debit) as d, SUM(jl.credit) as c 
        FROM journal_lines jl 
@@ -252,65 +274,131 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     );
     const cashBalance = (cashRow.d || 0) - (cashRow.c || 0);
 
-    // 2. Total Revenue (Revenue accounts)
+    // 2. Total Revenue (filtered by period)
     const revRow = await db.get(
       `SELECT SUM(jl.credit - jl.debit) as total 
        FROM journal_lines jl 
-       JOIN accounts a ON a.id = jl.account_id 
-       WHERE a.type = 'Revenue'`
+       JOIN accounts a ON a.id = jl.account_id
+       JOIN journal_entries je ON je.id = jl.entry_id
+       WHERE a.type = 'Revenue' ${kpiDateFilter}`
     );
     const totalRevenue = revRow.total || 0;
 
-    // 3. Total Expense (Expense accounts)
+    // 3. Total Expense (filtered by period)
     const expRow = await db.get(
       `SELECT SUM(jl.debit - jl.credit) as total 
        FROM journal_lines jl 
-       JOIN accounts a ON a.id = jl.account_id 
-       WHERE a.type = 'Expense'`
+       JOIN accounts a ON a.id = jl.account_id
+       JOIN journal_entries je ON je.id = jl.entry_id
+       WHERE a.type = 'Expense' ${kpiDateFilter}`
     );
     const totalExpense = expRow.total || 0;
 
     const netIncome = totalRevenue - totalExpense;
 
-    // 4. Monthly Growth data (last 12 months)
-    const months = [];
-    const now = new Date();
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleString('id-ID', { month: 'short', year: 'numeric' });
-      months.push({ key, label, revenue: 0, expense: 0 });
+    // 4. Chart data — depends on filter mode
+    let chartData = [];
+    let chartMode = 'monthly'; // or 'daily'
+
+    if (filterYear && filterMonth) {
+      // DAILY breakdown for a specific month
+      chartMode = 'daily';
+      const daysInMonth = new Date(filterYear, filterMonth, 0).getDate();
+      const days = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${filterYear}-${String(filterMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        days.push({ key: dateStr, label: String(d), revenue: 0, expense: 0 });
+      }
+
+      const dailyData = await db.all(`
+        WITH per AS (
+          SELECT date(je.date) AS dt, a.type AS type,
+                 SUM(jl.debit) AS d, SUM(jl.credit) AS c
+          FROM journal_entries je
+          JOIN journal_lines jl ON jl.entry_id = je.id
+          JOIN accounts a       ON a.id = jl.account_id
+          WHERE date(je.date) BETWEEN date(?) AND date(?)
+          GROUP BY dt, type
+        )
+        SELECT dt,
+               SUM(CASE WHEN type='Revenue' THEN c - d ELSE 0 END) AS revenue,
+               SUM(CASE WHEN type='Expense' THEN d - c ELSE 0 END) AS expense
+        FROM per
+        GROUP BY dt
+        ORDER BY dt;
+      `, [days[0].key, days[days.length - 1].key]);
+
+      dailyData.forEach(row => {
+        const match = days.find(d => d.key === row.dt);
+        if (match) {
+          match.revenue = parseFloat(row.revenue) || 0;
+          match.expense = parseFloat(row.expense) || 0;
+        }
+      });
+
+      chartData = days;
+
+    } else {
+      // MONTHLY breakdown (for a specific year, or last 12 months)
+      chartMode = 'monthly';
+      const months = [];
+      
+      if (filterYear) {
+        // All 12 months of a specific year
+        for (let m = 0; m < 12; m++) {
+          const d = new Date(filterYear, m, 1);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const label = d.toLocaleString('id-ID', { month: 'short' });
+          months.push({ key, label, revenue: 0, expense: 0 });
+        }
+      } else {
+        // Last 12 months from today
+        const now = new Date();
+        for (let i = 11; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const label = d.toLocaleString('id-ID', { month: 'short', year: 'numeric' });
+          months.push({ key, label, revenue: 0, expense: 0 });
+        }
+      }
+
+      const startPeriod = months[0].key + '-01';
+      const endPeriod = `${months[months.length - 1].key}-31`;
+
+      const monthlyData = await db.all(`
+        WITH per AS (
+          SELECT strftime('%Y-%m', date) AS ym, a.type AS type,
+                 SUM(jl.debit) AS d, SUM(jl.credit) AS c
+          FROM journal_entries je
+          JOIN journal_lines jl ON jl.entry_id = je.id
+          JOIN accounts a       ON a.id = jl.account_id
+          WHERE date(je.date) BETWEEN date(?) AND date(?)
+          GROUP BY ym, type
+        )
+        SELECT ym,
+               SUM(CASE WHEN type='Revenue' THEN c - d ELSE 0 END) AS revenue,
+               SUM(CASE WHEN type='Expense' THEN d - c ELSE 0 END) AS expense
+        FROM per
+        GROUP BY ym
+        ORDER BY ym;
+      `, [startPeriod, endPeriod]);
+
+      monthlyData.forEach(row => {
+        const match = months.find(m => m.key === row.ym);
+        if (match) {
+          match.revenue = parseFloat(row.revenue) || 0;
+          match.expense = parseFloat(row.expense) || 0;
+        }
+      });
+
+      chartData = months;
     }
 
-    const startPeriod = months[0].key + '-01';
-    const endPeriod = `${months[11].key}-31`; // Approx end of month
-
-    const monthlyData = await db.all(`
-      WITH per AS (
-        SELECT strftime('%Y-%m', date) AS ym, a.type AS type,
-               SUM(jl.debit) AS d, SUM(jl.credit) AS c
-        FROM journal_entries je
-        JOIN journal_lines jl ON jl.entry_id = je.id
-        JOIN accounts a       ON a.id = jl.account_id
-        WHERE date(je.date) BETWEEN date(?) AND date(?)
-        GROUP BY ym, type
-      )
-      SELECT ym,
-             SUM(CASE WHEN type='Revenue' THEN c - d ELSE 0 END) AS revenue,
-             SUM(CASE WHEN type='Expense' THEN d - c ELSE 0 END) AS expense
-      FROM per
-      GROUP BY ym
-      ORDER BY ym;
-    `, [startPeriod, endPeriod]);
-
-    // Map monthly aggregate back
-    monthlyData.forEach(row => {
-      const match = months.find(m => m.key === row.ym);
-      if (match) {
-        match.revenue = parseFloat(row.revenue) || 0;
-        match.expense = parseFloat(row.expense) || 0;
-      }
-    });
+    // 5. Get available years from journal data for the filter dropdown
+    const yearRows = await db.all(
+      `SELECT DISTINCT strftime('%Y', date) AS yr FROM journal_entries ORDER BY yr`
+    );
+    const availableYears = yearRows.map(r => parseInt(r.yr)).filter(y => !isNaN(y));
 
     res.json({
       role,
@@ -318,7 +406,11 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       totalRevenue,
       totalExpense,
       netIncome,
-      chartData: months
+      chartData,
+      chartMode,
+      availableYears,
+      filterYear: filterYear || null,
+      filterMonth: filterMonth || null
     });
   } catch (err) {
     res.status(500).json({ message: 'Kesalahan server: ' + err.message });

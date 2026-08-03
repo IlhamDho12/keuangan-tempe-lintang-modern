@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, formatRupiah, useAuth } from '../App';
 import { 
-  TrendingUp, TrendingDown, DollarSign, Wallet, Calendar, AlertCircle, FileSpreadsheet, ArrowUpRight, Award
+  TrendingUp, TrendingDown, DollarSign, Wallet, Calendar, AlertCircle, FileSpreadsheet, ArrowUpRight, Award, Filter, RotateCcw
 } from 'lucide-react';
 import {
   Chart as ChartJS,
@@ -30,27 +30,45 @@ ChartJS.register(
   Filler
 );
 
+const MONTH_NAMES = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
 function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [filterYear, setFilterYear] = useState('');
+  const [filterMonth, setFilterMonth] = useState('');
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [filterYear, filterMonth]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch('/api/dashboard');
+      let url = '/api/dashboard';
+      const params = [];
+      if (filterYear) params.push(`year=${filterYear}`);
+      if (filterYear && filterMonth) params.push(`month=${filterMonth}`);
+      if (params.length > 0) url += '?' + params.join('&');
+
+      const res = await apiFetch(url);
       setData(res);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResetFilter = () => {
+    setFilterYear('');
+    setFilterMonth('');
   };
 
   if (loading) {
@@ -149,6 +167,25 @@ function Dashboard() {
   const chartExpense = data?.chartData?.map(d => d.expense) || [];
   const chartLaba = data?.chartData?.map(d => d.revenue - d.expense) || [];
 
+  // Build chart title
+  let chartTitle = 'Grafik Pertumbuhan Keuangan (12 Bulan Terakhir)';
+  let chartSubtitle = 'Perkembangan agregat nilai pendapatan, pengeluaran beban, dan laba bersih per bulan.';
+  if (filterYear && filterMonth) {
+    chartTitle = `Grafik Keuangan Harian — ${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
+    chartSubtitle = `Rincian harian pendapatan, beban, dan laba bersih pada ${MONTH_NAMES[filterMonth - 1]} ${filterYear}.`;
+  } else if (filterYear) {
+    chartTitle = `Grafik Keuangan Bulanan — Tahun ${filterYear}`;
+    chartSubtitle = `Perkembangan bulanan pendapatan, beban, dan laba bersih selama tahun ${filterYear}.`;
+  }
+
+  // Build KPI subtitle
+  let kpiPeriodLabel = 'Semua Periode';
+  if (filterYear && filterMonth) {
+    kpiPeriodLabel = `${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
+  } else if (filterYear) {
+    kpiPeriodLabel = `Tahun ${filterYear}`;
+  }
+
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -219,11 +256,106 @@ function Dashboard() {
     ]
   };
 
+  const availableYears = data?.availableYears || [];
+
   return (
     <div>
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ marginBottom: '8px' }}>Dashboard Ringkasan</h1>
-        <p style={{ color: 'var(--text-muted)' }}>Sistem Informasi Keuangan Tempe Lintang &bull; Periode Berjalan</p>
+      <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <h1 style={{ marginBottom: '8px' }}>Dashboard Ringkasan</h1>
+          <p style={{ color: 'var(--text-muted)' }}>
+            Sistem Informasi Keuangan Tempe Lintang &bull; {kpiPeriodLabel}
+          </p>
+        </div>
+
+        {/* Filter Controls */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '10px', 
+          flexWrap: 'wrap',
+          padding: '10px 16px',
+          borderRadius: '12px',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)'
+        }}>
+          <Filter size={16} style={{ color: 'var(--accent-primary)' }} />
+          
+          <select 
+            id="filter-year"
+            value={filterYear} 
+            onChange={(e) => {
+              setFilterYear(e.target.value);
+              if (!e.target.value) setFilterMonth('');
+            }}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-primary)',
+              color: 'var(--text-primary)',
+              fontSize: '0.85rem',
+              fontFamily: 'Outfit',
+              cursor: 'pointer',
+              outline: 'none',
+              minWidth: '120px'
+            }}
+          >
+            <option value="">Semua Tahun</option>
+            {availableYears.map(yr => (
+              <option key={yr} value={yr}>{yr}</option>
+            ))}
+          </select>
+
+          {filterYear && (
+            <select
+              id="filter-month"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+                fontFamily: 'Outfit',
+                cursor: 'pointer',
+                outline: 'none',
+                minWidth: '140px',
+                animation: 'fadeIn 0.2s ease'
+              }}
+            >
+              <option value="">Semua Bulan</option>
+              {MONTH_NAMES.map((name, idx) => (
+                <option key={idx + 1} value={idx + 1}>{name}</option>
+              ))}
+            </select>
+          )}
+
+          {(filterYear || filterMonth) && (
+            <button 
+              onClick={handleResetFilter}
+              title="Reset Filter"
+              style={{
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => { e.target.style.color = 'var(--danger)'; e.target.style.borderColor = 'var(--danger)'; }}
+              onMouseLeave={(e) => { e.target.style.color = 'var(--text-muted)'; e.target.style.borderColor = 'var(--border-color)'; }}
+            >
+              <RotateCcw size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -245,6 +377,7 @@ function Dashboard() {
           <div>
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Pendapatan</span>
             <h2 style={{ fontSize: '1.6rem', margin: '4px 0 0 0', color: 'var(--success)' }}>{formatRupiah(data?.totalRevenue)}</h2>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{kpiPeriodLabel}</span>
           </div>
         </div>
 
@@ -255,6 +388,7 @@ function Dashboard() {
           <div>
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Beban</span>
             <h2 style={{ fontSize: '1.6rem', margin: '4px 0 0 0', color: 'var(--danger)' }}>{formatRupiah(data?.totalExpense)}</h2>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{kpiPeriodLabel}</span>
           </div>
         </div>
 
@@ -274,6 +408,7 @@ function Dashboard() {
             }}>
               {formatRupiah(data?.netIncome)}
             </h2>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{kpiPeriodLabel}</span>
           </div>
         </div>
       </div>
@@ -284,10 +419,10 @@ function Dashboard() {
           <div>
             <h2 style={{ fontSize: '1.25rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
               <TrendingUp size={20} style={{ color: 'var(--accent-primary)' }} />
-              <span>Grafik Pertumbuhan Keuangan (12 Bulan Terakhir)</span>
+              <span>{chartTitle}</span>
             </h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
-              Perkembangan agregat nilai pendapatan, pengeluaran beban, dan laba bersih per bulan.
+              {chartSubtitle}
             </p>
           </div>
         </div>
@@ -295,6 +430,13 @@ function Dashboard() {
           <Bar data={chartConfig} options={chartOptions} />
         </div>
       </div>
+
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
