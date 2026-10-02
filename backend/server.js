@@ -138,22 +138,41 @@ function requireRole(roles) {
   };
 }
 
-// Auth Endpoints
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username dan Password wajib diisi.' });
+function requireWriteAccess(req, res, next) {
+  if (req.user.writeAccess !== true) {
+    return res.status(403).json({ message: 'Masukkan kode akses untuk mengubah data.' });
   }
+  next();
+}
+
+// Auth Endpoints
+app.get('/api/auth/users', async (req, res) => {
+  try {
+    const users = await db.all('SELECT id, name, role FROM users ORDER BY name');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'Kesalahan server: ' + err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { userId, username, password } = req.body;
 
   try {
-    const user = await db.get('SELECT * FROM users WHERE LOWER(username) = LOWER(?)', [username.trim()]);
-    if (!user) {
-      return res.status(400).json({ message: 'Username atau Password salah.' });
+    let user;
+    if (userId) {
+      user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
+    } else if (username && password) {
+      user = await db.get('SELECT * FROM users WHERE LOWER(username) = LOWER(?)', [username.trim()]);
+      if (user && !(await bcrypt.compare(password, user.password))) {
+        user = null;
+      }
+    } else {
+      return res.status(400).json({ message: 'Pilih pengguna untuk melanjutkan.' });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Username atau Password salah.' });
+    if (!user) {
+      return res.status(400).json({ message: 'Pengguna tidak ditemukan atau password salah.' });
     }
 
     const token = jwt.sign(
@@ -176,7 +195,27 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+app.post('/api/auth/enable-writes', authenticateToken, async (req, res) => {
+  const configuredAccessCode = process.env.ACCESS_CODE;
+  if (!configuredAccessCode) {
+    return res.status(503).json({ message: 'Kode akses belum dikonfigurasi di server.' });
+  }
+
+  const { accessCode } = req.body;
+  if (typeof accessCode !== 'string' || accessCode !== configuredAccessCode) {
+    return res.status(401).json({ message: 'Kode akses salah.' });
+  }
+
+  const { id, username, name, role } = req.user;
+  const token = jwt.sign(
+    { id, username, name, role, writeAccess: true },
+    JWT_SECRET,
+    { expiresIn: '12h' }
+  );
+  res.json({ token });
+});
+
+app.post('/api/auth/change-password', authenticateToken, requireWriteAccess, async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body;
   const uid = req.user.id;
 
@@ -427,7 +466,7 @@ app.get('/api/accounts', authenticateToken, requireRole(['admin', 'owner']), asy
   }
 });
 
-app.post('/api/accounts', authenticateToken, requireRole(['admin', 'owner']), async (req, res) => {
+app.post('/api/accounts', authenticateToken, requireWriteAccess, requireRole(['admin', 'owner']), async (req, res) => {
   const { code, name, normal, type } = req.body;
   if (!code || !name || !normal || !type) {
     return res.status(400).json({ message: 'Semua bidang wajib diisi.' });
@@ -515,7 +554,7 @@ app.get('/api/journals', authenticateToken, requireRole(['admin', 'owner']), asy
   }
 });
 
-app.post('/api/journals', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.post('/api/journals', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const { date, description, lines } = req.body;
   if (!date || !description || !lines || lines.length < 2) {
     return res.status(400).json({ message: 'Tanggal, Keterangan, dan minimal 2 baris jurnal wajib diisi.' });
@@ -575,7 +614,7 @@ app.post('/api/journals', authenticateToken, requireRole(['admin']), async (req,
   }
 });
 
-app.put('/api/journals/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.put('/api/journals/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const entryId = parseInt(req.params.id);
   const { date, description, lines } = req.body;
 
@@ -638,7 +677,7 @@ app.put('/api/journals/:id', authenticateToken, requireRole(['admin']), async (r
   }
 });
 
-app.delete('/api/journals/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.delete('/api/journals/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const entryId = parseInt(req.params.id);
 
   try {
@@ -864,7 +903,7 @@ app.get('/api/salaries', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/salaries', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.post('/api/salaries', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const { user_id, date, amount, note } = req.body;
   if (!user_id || !date || !amount) {
     return res.status(400).json({ message: 'Pegawai, Tanggal, dan Jumlah Gaji wajib diisi.' });
@@ -915,7 +954,7 @@ app.post('/api/salaries', authenticateToken, requireRole(['admin']), async (req,
   }
 });
 
-app.put('/api/salaries/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.put('/api/salaries/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const salaryId = parseInt(req.params.id);
   const { user_id, date, amount, note } = req.body;
 
@@ -982,7 +1021,7 @@ app.put('/api/salaries/:id', authenticateToken, requireRole(['admin']), async (r
   }
 });
 
-app.delete('/api/salaries/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.delete('/api/salaries/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const salaryId = parseInt(req.params.id);
 
   try {
@@ -1017,7 +1056,7 @@ app.get('/api/users', authenticateToken, requireRole(['admin']), async (req, res
   }
 });
 
-app.post('/api/users', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.post('/api/users', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const { username, name, role, password } = req.body;
   if (!username || !name || !role || !password) {
     return res.status(400).json({ message: 'Semua bidang wajib diisi.' });
@@ -1043,7 +1082,7 @@ app.post('/api/users', authenticateToken, requireRole(['admin']), async (req, re
   }
 });
 
-app.put('/api/users/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.put('/api/users/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const userId = parseInt(req.params.id);
   const { username, name, role, password } = req.body;
 
@@ -1077,7 +1116,7 @@ app.put('/api/users/:id', authenticateToken, requireRole(['admin']), async (req,
   }
 });
 
-app.delete('/api/users/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+app.delete('/api/users/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
   const userId = parseInt(req.params.id);
 
   if (userId === req.user.id) {
@@ -1111,5 +1150,3 @@ dbReady = initDb().then(() => {
 });
 
 module.exports = app;
-
-

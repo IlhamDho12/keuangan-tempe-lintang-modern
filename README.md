@@ -13,7 +13,7 @@ Aplikasi Akuntansi Keuangan berbasis Web modern yang dikonversi dari PHP Native 
   - **Drill-down Pop-up Modal**: Membuka histori transaksi per akun secara instan melalui modal pop-up yang modern.
 - **Gaji Pegawai**: Input penggajian bulanan pegawai yang terintegrasi secara otomatis dengan penjurnalan akuntansi (double entry debit Beban Gaji, kredit Kas).
 - **Manajemen User (Admin)**: CRUD data pegawai beserta tingkat peran hak akses (`admin`, `owner`, dan `pegawai`).
-- **Keamanan Akun**: Pengamanan login menggunakan enkripsi password Bcrypt dan otorisasi API berbasis JSON Web Token (JWT).
+- **Akses Bertingkat**: Pilih pengguna untuk masuk dengan akses baca; kode akses server diperlukan untuk menambah, mengubah, atau menghapus data.
 - **Desain Premium**: Glassmorphism UI, responsif (desktop & mobile), serta mode gelap/terang (*dark & light theme*).
 
 ## 🛠️ Stack Teknologi
@@ -53,6 +53,7 @@ npm install
 npm run dev # atau: node server.js
 ```
 Server API backend akan aktif di `http://localhost:5000`.
+Atur variabel lingkungan `ACCESS_CODE` pada backend ke kode akses bersama yang diinginkan. Jangan simpan kode akses dalam source code atau repositori.
 
 ### 2. Jalankan Frontend (Vite)
 ```bash

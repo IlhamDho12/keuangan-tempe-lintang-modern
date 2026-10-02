@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../App';
-import { KeyRound, User, Lock, LogIn } from 'lucide-react';
+import { User, LogIn } from 'lucide-react';
 
 function Login() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [users, setUsers] = useState([]);
+  const [selectedRole, setSelectedRole] = useState('');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -15,10 +17,39 @@ function Login() {
 
   const from = location.state?.from?.pathname || '/';
 
+  useEffect(() => {
+    let active = true;
+
+    fetch('/api/auth/users')
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || 'Gagal memuat daftar pengguna.');
+        }
+        if (active) setUsers(data);
+      })
+      .catch((err) => {
+        if (active) setError(err.message);
+      })
+      .finally(() => {
+        if (active) setLoadingUsers(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!username || !password) {
-      setError('Username dan Password wajib diisi.');
+    const selectedUser = selectedRole === 'pegawai'
+      ? users.find((user) => String(user.id) === selectedEmployeeId)
+      : users.find((user) => user.role === selectedRole);
+
+    if (!selectedUser) {
+      setError(selectedRole === 'pegawai'
+        ? 'Pilih nama pegawai untuk melanjutkan.'
+        : 'Pilih peran pengguna untuk melanjutkan.');
       return;
     }
 
@@ -29,7 +60,7 @@ function Login() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
+        body: JSON.stringify({ userId: selectedUser.id })
       });
 
       const data = await res.json();
@@ -38,6 +69,7 @@ function Login() {
       }
 
       login(data.user, data.token);
+      localStorage.removeItem('writeAccess');
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.message);
@@ -89,7 +121,7 @@ function Login() {
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           <div className="form-group" style={{ margin: 0 }}>
-            <label htmlFor="username">Username</label>
+            <label htmlFor="role">Jenis Pengguna</label>
             <div style={{ position: 'relative' }}>
               <User size={18} style={{
                 position: 'absolute',
@@ -98,49 +130,60 @@ function Login() {
                 transform: 'translateY(-50%)',
                 color: 'var(--text-muted)'
               }} />
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Masukkan username Anda"
+              <select
+                id="role"
+                value={selectedRole}
+                onChange={(e) => {
+                  setSelectedRole(e.target.value);
+                  setSelectedEmployeeId('');
+                }}
                 style={{ paddingLeft: '44px', width: '100%' }}
-                disabled={loading}
-              />
+                disabled={loading || loadingUsers || users.length === 0}
+              >
+                <option value="">{loadingUsers ? 'Memuat pengguna...' : 'Pilih peran pengguna'}</option>
+                {['admin', 'owner', 'pegawai'].map((role) => (
+                  users.some((user) => user.role === role) && (
+                    <option key={role} value={role}>
+                      {role === 'pegawai' ? 'Pegawai' : role === 'admin' ? 'Admin' : 'Owner'}
+                    </option>
+                  )
+                ))}
+              </select>
             </div>
           </div>
 
-          <div className="form-group" style={{ margin: 0 }}>
-            <label htmlFor="password">Password</label>
-            <div style={{ position: 'relative' }}>
-              <Lock size={18} style={{
-                position: 'absolute',
-                left: '14px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)'
-              }} />
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Masukkan password Anda"
-                style={{ paddingLeft: '44px', width: '100%' }}
-                disabled={loading}
-              />
+          {selectedRole === 'pegawai' && (
+            <div className="form-group" style={{ margin: 0 }}>
+              <label htmlFor="employee">Nama Pegawai</label>
+              <select
+                id="employee"
+                value={selectedEmployeeId}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                style={{ width: '100%' }}
+                disabled={loading || loadingUsers}
+              >
+                <option value="">Pilih nama pegawai</option>
+                {users.filter((user) => user.role === 'pegawai').map((user) => (
+                  <option key={user.id} value={user.id}>{user.name}</option>
+                ))}
+              </select>
             </div>
-          </div>
+          )}
 
           <button
             type="submit"
             className="btn btn-primary"
             style={{ width: '100%', padding: '14px', borderRadius: 'var(--radius-sm)', marginTop: '8px' }}
-            disabled={loading}
+            disabled={
+              loading ||
+              loadingUsers ||
+              !selectedRole ||
+              (selectedRole === 'pegawai' && !selectedEmployeeId)
+            }
           >
             {loading ? 'Memproses...' : (
               <>
-                <span>Masuk Ke Sistem</span>
+                <span>Masuk (Akses Baca)</span>
                 <LogIn size={18} />
               </>
             )}

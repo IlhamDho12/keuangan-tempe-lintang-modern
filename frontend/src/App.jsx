@@ -1,8 +1,8 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, BarChart3, Receipt, Wallet, Users, Settings, 
-  LogOut, LogIn, KeyRound, Sun, Moon, Menu, X, PlusCircle, Trash2, Edit, ChevronRight
+  LogOut, KeyRound, Sun, Moon, Menu, X
 } from 'lucide-react';
 
 // Auth Context
@@ -30,6 +30,7 @@ function AuthProvider({ children }) {
     setToken(null);
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('writeAccess');
   };
 
   const updateUserInfo = (name) => {
@@ -41,7 +42,7 @@ function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUserInfo }}>
+    <AuthContext.Provider value={{ user, token, login, logout, updateUserInfo, requestWriteAccess }}>
       {children}
     </AuthContext.Provider>
   );
@@ -63,8 +64,47 @@ function ProtectedRoute({ children, roles }) {
   return children;
 }
 
+async function requestWriteAccess() {
+  if (localStorage.getItem('writeAccess')) return;
+
+  const accessCode = window.prompt('Masukkan kode akses untuk membuka izin input, perubahan, dan penghapusan data:');
+  if (!accessCode) {
+    throw new Error('Akses tulis dibatalkan.');
+  }
+
+  const currentToken = localStorage.getItem('token');
+  if (!currentToken) {
+    throw new Error('Silakan pilih pengguna terlebih dahulu.');
+  }
+
+  const accessResponse = await fetch('/api/auth/enable-writes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${currentToken}`
+    },
+    body: JSON.stringify({ accessCode })
+  });
+  const accessData = await accessResponse.json().catch(() => ({}));
+  if (!accessResponse.ok) {
+    throw new Error(accessData.message || 'Gagal membuka akses tulis.');
+  }
+
+  localStorage.setItem('token', accessData.token);
+  localStorage.setItem('writeAccess', 'true');
+}
+
 // Fetch helper with auth header
 export async function apiFetch(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const requiresWriteAccess = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+    && url !== '/api/auth/login'
+    && url !== '/api/auth/enable-writes';
+
+  if (requiresWriteAccess) {
+    await requestWriteAccess();
+  }
+
   const token = localStorage.getItem('token');
   const headers = {
     'Content-Type': 'application/json',
@@ -80,6 +120,7 @@ export async function apiFetch(url, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('writeAccess');
     window.location.href = '/login';
     throw new Error('Sesi Anda telah habis. Silakan login kembali.');
   }
@@ -119,7 +160,7 @@ import ChangePassword from './pages/ChangePassword';
 
 // Sidebar Layout Wrapper
 function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, requestWriteAccess } = useAuth();
   const navigate = useNavigate();
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -268,14 +309,22 @@ function Layout() {
             >
               {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
             </button>
-            <Link 
-              to="/change-password" 
+            <button
+              onClick={async () => {
+                try {
+                  await requestWriteAccess();
+                  window.alert('Akses tulis aktif untuk sesi ini.');
+                } catch (err) {
+                  window.alert(err.message);
+                }
+              }}
               className="btn btn-secondary" 
               style={{ flex: 1, padding: '10px', borderRadius: '8px' }}
-              title="Ganti Password"
+              title="Buka akses tulis"
+              aria-label="Buka akses tulis"
             >
               <KeyRound size={18} />
-            </Link>
+            </button>
             <button 
               onClick={handleLogout} 
               className="btn btn-danger" 
