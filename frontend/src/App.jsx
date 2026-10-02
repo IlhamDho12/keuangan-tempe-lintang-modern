@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, BarChart3, Receipt, Wallet, Users, Settings, 
@@ -7,6 +7,7 @@ import {
 
 // Auth Context
 const AuthContext = createContext(null);
+let writeAccessRequestHandler;
 
 export const useAuth = () => useContext(AuthContext);
 
@@ -17,6 +18,10 @@ function AuthProvider({ children }) {
     return savedUser ? JSON.parse(savedUser) : null;
   });
   const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [writeAccessDialogOpen, setWriteAccessDialogOpen] = useState(false);
+  const [writeAccessError, setWriteAccessError] = useState('');
+  const [writeAccessLoading, setWriteAccessLoading] = useState(false);
+  const pendingWriteAccess = useRef(null);
 
   const login = (userData, userToken) => {
     setUser(userData);
@@ -33,6 +38,78 @@ function AuthProvider({ children }) {
     localStorage.removeItem('writeAccess');
   };
 
+  const requestWriteAccess = useCallback(() => {
+    if (localStorage.getItem('writeAccess')) return Promise.resolve();
+    if (pendingWriteAccess.current) {
+      setWriteAccessDialogOpen(true);
+      return pendingWriteAccess.current.promise;
+    }
+
+    setWriteAccessError('');
+    setWriteAccessDialogOpen(true);
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    pendingWriteAccess.current = {
+      promise,
+      resolve: resolveRequest,
+      reject: rejectRequest
+    };
+    return promise;
+  }, []);
+
+  useLayoutEffect(() => {
+    writeAccessRequestHandler = requestWriteAccess;
+    return () => {
+      if (writeAccessRequestHandler === requestWriteAccess) {
+        writeAccessRequestHandler = null;
+      }
+    };
+  }, [requestWriteAccess]);
+
+  const cancelWriteAccess = () => {
+    setWriteAccessDialogOpen(false);
+    setWriteAccessError('');
+    if (pendingWriteAccess.current) {
+      pendingWriteAccess.current.reject(new Error('Akses tulis dibatalkan.'));
+      pendingWriteAccess.current = null;
+    }
+  };
+
+  const enableWriteAccess = async (accessCode) => {
+    setWriteAccessLoading(true);
+    setWriteAccessError('');
+    try {
+      const response = await fetch('/api/auth/enable-writes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ accessCode })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setWriteAccessError(data.message || 'Kode akses tidak dapat diverifikasi.');
+        return;
+      }
+
+      setToken(data.token);
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('writeAccess', 'true');
+      pendingWriteAccess.current?.resolve();
+      pendingWriteAccess.current = null;
+      setWriteAccessDialogOpen(false);
+    } catch (err) {
+      setWriteAccessError(err.message || 'Tidak dapat terhubung ke server.');
+    } finally {
+      setWriteAccessLoading(false);
+    }
+  };
+
   const updateUserInfo = (name) => {
     if (user) {
       const updated = { ...user, name };
@@ -44,7 +121,124 @@ function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{ user, token, login, logout, updateUserInfo, requestWriteAccess }}>
       {children}
+      {writeAccessDialogOpen && (
+        <WriteAccessModal
+          error={writeAccessError}
+          loading={writeAccessLoading}
+          onClose={cancelWriteAccess}
+          onSubmit={enableWriteAccess}
+        />
+      )}
     </AuthContext.Provider>
+  );
+}
+
+function WriteAccessModal({ error, loading, onClose, onSubmit }) {
+  const [accessCode, setAccessCode] = useState('');
+
+  return (
+    <div
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !loading) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        background: 'rgba(24, 15, 9, 0.62)',
+        backdropFilter: 'blur(6px)'
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="write-access-title"
+        className="glass-panel"
+        style={{
+          width: '100%',
+          maxWidth: '430px',
+          padding: '30px',
+          borderRadius: 'var(--radius-lg)',
+          background: 'var(--bg-secondary)',
+          boxShadow: '0 24px 80px rgba(0, 0, 0, 0.28)'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px' }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            display: 'grid',
+            placeItems: 'center',
+            borderRadius: '15px',
+            color: 'var(--text-primary)',
+            background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+          }}>
+            <KeyRound size={22} />
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="btn btn-secondary"
+            aria-label="Tutup dialog kode akses"
+            style={{ padding: '8px', borderRadius: '10px' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <h2 id="write-access-title" style={{ margin: '0 0 8px', color: 'var(--text-primary)' }}>
+          Buka Akses Tulis
+        </h2>
+        <p style={{ margin: '0 0 22px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          Masukkan kode akses untuk menambah, mengubah, atau menghapus data.
+        </p>
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit(accessCode);
+          }}
+        >
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label htmlFor="write-access-code">Kode Akses</label>
+            <input
+              id="write-access-code"
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              autoFocus
+              value={accessCode}
+              onChange={(event) => setAccessCode(event.target.value)}
+              placeholder="Masukkan kode akses"
+              disabled={loading}
+              required
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          {error && (
+            <div className="alert alert-danger" role="alert" style={{ marginBottom: '16px' }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <button type="button" onClick={onClose} className="btn btn-secondary" disabled={loading}>
+              Batal
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={loading || !accessCode}>
+              <KeyRound size={16} />
+              <span>{loading ? 'Memeriksa...' : 'Buka Akses'}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -64,36 +258,6 @@ function ProtectedRoute({ children, roles }) {
   return children;
 }
 
-async function requestWriteAccess() {
-  if (localStorage.getItem('writeAccess')) return;
-
-  const accessCode = window.prompt('Masukkan kode akses untuk membuka izin input, perubahan, dan penghapusan data:');
-  if (!accessCode) {
-    throw new Error('Akses tulis dibatalkan.');
-  }
-
-  const currentToken = localStorage.getItem('token');
-  if (!currentToken) {
-    throw new Error('Silakan pilih pengguna terlebih dahulu.');
-  }
-
-  const accessResponse = await fetch('/api/auth/enable-writes', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${currentToken}`
-    },
-    body: JSON.stringify({ accessCode })
-  });
-  const accessData = await accessResponse.json().catch(() => ({}));
-  if (!accessResponse.ok) {
-    throw new Error(accessData.message || 'Gagal membuka akses tulis.');
-  }
-
-  localStorage.setItem('token', accessData.token);
-  localStorage.setItem('writeAccess', 'true');
-}
-
 // Fetch helper with auth header
 export async function apiFetch(url, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
@@ -102,7 +266,10 @@ export async function apiFetch(url, options = {}) {
     && url !== '/api/auth/enable-writes';
 
   if (requiresWriteAccess) {
-    await requestWriteAccess();
+    if (!writeAccessRequestHandler) {
+      throw new Error('Dialog kode akses belum siap. Silakan coba lagi.');
+    }
+    await writeAccessRequestHandler();
   }
 
   const token = localStorage.getItem('token');
@@ -311,12 +478,7 @@ function Layout() {
             </button>
             <button
               onClick={async () => {
-                try {
-                  await requestWriteAccess();
-                  window.alert('Akses tulis aktif untuk sesi ini.');
-                } catch (err) {
-                  window.alert(err.message);
-                }
+                requestWriteAccess().catch(() => {});
               }}
               className="btn btn-secondary" 
               style={{ flex: 1, padding: '10px', borderRadius: '8px' }}

@@ -492,6 +492,33 @@ app.post('/api/accounts', authenticateToken, requireWriteAccess, requireRole(['a
   }
 });
 
+app.delete('/api/accounts/:id', authenticateToken, requireWriteAccess, requireRole(['admin']), async (req, res) => {
+  const accountId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return res.status(400).json({ message: 'ID akun tidak valid.' });
+  }
+
+  try {
+    const account = await db.get('SELECT id FROM accounts WHERE id = ?', [accountId]);
+    if (!account) {
+      return res.status(404).json({ message: 'Akun tidak ditemukan.' });
+    }
+
+    const journalReferences = await db.get(
+      'SELECT COUNT(*) AS count FROM journal_lines WHERE account_id = ?',
+      [accountId]
+    );
+    if (journalReferences.count > 0) {
+      return res.status(409).json({ message: 'Akun tidak dapat dihapus karena sudah digunakan dalam jurnal.' });
+    }
+
+    await db.run('DELETE FROM accounts WHERE id = ?', [accountId]);
+    res.json({ message: 'Akun berhasil dihapus.' });
+  } catch (err) {
+    res.status(500).json({ message: 'Kesalahan server: ' + err.message });
+  }
+});
+
 // Journal Endpoints
 app.get('/api/journals', authenticateToken, requireRole(['admin', 'owner']), async (req, res) => {
   const { q, account_id, date_from, date_to } = req.query;

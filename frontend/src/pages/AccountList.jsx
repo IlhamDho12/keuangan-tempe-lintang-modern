@@ -1,32 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch, useAuth } from '../App';
-import { PlusCircle, Settings, Award } from 'lucide-react';
+import { PlusCircle, Trash2 } from 'lucide-react';
 
 function AccountList() {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchAccounts();
+    let active = true;
+    apiFetch('/api/accounts')
+      .then((data) => {
+        if (active) setAccounts(data);
+      })
+      .catch((err) => {
+        if (active) setError(err.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const fetchAccounts = async () => {
-    setLoading(true);
+  const isAdmin = user?.role === 'admin';
+
+  const handleDelete = async (account) => {
+    if (!window.confirm(`Hapus akun ${account.code} - ${account.name}?`)) return;
+
+    setDeletingId(account.id);
     setError('');
     try {
-      const res = await apiFetch('/api/accounts');
-      setAccounts(res);
+      await apiFetch(`/api/accounts/${account.id}`, { method: 'DELETE' });
+      setAccounts(await apiFetch('/api/accounts'));
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setDeletingId(null);
     }
   };
-
-  const isAdmin = user?.role === 'admin';
 
   return (
     <div>
@@ -57,6 +74,7 @@ function AccountList() {
                   <th style={{ width: '40%' }}>Nama Rekening Akun</th>
                   <th style={{ width: '20%' }}>Tipe Laporan</th>
                   <th style={{ width: '20%' }}>Saldo Normal</th>
+                  {isAdmin && <th>Aksi</th>}
                 </tr>
               </thead>
               <tbody>
@@ -79,6 +97,21 @@ function AccountList() {
                     <td style={{ textTransform: 'uppercase', fontWeight: 700, fontSize: '0.8rem', color: acc.normal === 'debit' ? 'var(--success)' : 'var(--accent-primary)' }}>
                       {acc.normal}
                     </td>
+                    {isAdmin && (
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(acc)}
+                          className="btn btn-danger"
+                          disabled={deletingId === acc.id}
+                          aria-label={`Hapus akun ${acc.code} ${acc.name}`}
+                          title="Hapus akun"
+                          style={{ padding: '8px', backgroundColor: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)' }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
