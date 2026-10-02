@@ -3,6 +3,15 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../App';
 import { User, LogIn } from 'lucide-react';
 
+async function readJsonResponse(response) {
+  const body = await response.text();
+  try {
+    return body ? JSON.parse(body) : {};
+  } catch {
+    throw new Error(`Server mengembalikan respons tidak valid (HTTP ${response.status}).`);
+  }
+}
+
 function Login() {
   const [users, setUsers] = useState([]);
   const [selectedRole, setSelectedRole] = useState('');
@@ -22,9 +31,12 @@ function Login() {
 
     fetch('/api/auth/users')
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJsonResponse(res);
         if (!res.ok) {
           throw new Error(data.message || 'Gagal memuat daftar pengguna.');
+        }
+        if (!Array.isArray(data)) {
+          throw new Error('Server mengirim format daftar pengguna yang tidak valid.');
         }
         if (active) setUsers(data);
       })
@@ -63,7 +75,7 @@ function Login() {
         body: JSON.stringify({ userId: selectedUser.id })
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         throw new Error(data.message || 'Login gagal.');
       }
